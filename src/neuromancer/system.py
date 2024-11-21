@@ -26,7 +26,7 @@ class Node(nn.Module):
     Simple class to handle cyclic computational graph connections. input_keys and output_keys
     define computational node connections through intermediate dictionaries.
     """
-    def __init__(self, callable, input_keys, output_keys, name=None):
+    def __init__(self, callable, input_keys, output_keys, name=None, groupName=None):
         """
 
         :param callable: Input: All input arguments are assumed to be torch.Tensors (batchsize, dim)
@@ -34,10 +34,12 @@ class Node(nn.Module):
         :param input_keys: (list of str) For gathering inputs from intermediary data dictionary
         :param output_keys: (list of str) For sending inputs to other nodes through intermediary data dictionary
         :param name: (str) Unique node identifier
+        :param groupName: (str) Group identifier for pydot plotting purposes
         """
         super().__init__()
         self.input_keys, self.output_keys = input_keys, output_keys
         self.callable, self.name = callable, name
+        self.groupName = groupName
 
     def forward(self, data):
         """
@@ -138,6 +140,7 @@ class System(nn.Module):
                                  style='filled', label='system')
         input_keys = []
         output_keys = []
+        subgraphs = {}
         nonames = 1
         for node in self.nodes:
             input_keys += node.input_keys
@@ -145,11 +148,25 @@ class System(nn.Module):
             if node.name is None or node.name == '':
                 node.name = f'node_{nonames}'
                 nonames += 1
-            sim_loop.add_node(pydot.Node(node.name, label=node.name,
-                                         color='lavender',
-                                         style='filled',
-                                         shape="box"))
+            if node.groupName is None or node.groupName == '':
+                sim_loop.add_node(pydot.Node(node.name, label=node.name,
+                                            color='lavender',
+                                            style='filled',
+                                            shape="box"))
+            else:
+                # Create subgraph if it doesn't already exist
+                if not(node.groupName in subgraphs.keys()):
+                    subgraphs[node.groupName] = pydot.Cluster(node.groupName, color='darkseagreen',
+                                                              style='filled', label=node.groupName)
+
+                subgraphs[node.groupName].add_node(pydot.Node(node.name, label=node.name,
+                                            color='lavender',
+                                            style='filled',
+                                            shape="box"))
+
         graph.add_node(pydot.Node('out', label='out', color='skyblue', style='filled', shape='box'))
+        for key, value in subgraphs.items():
+            sim_loop.add_subgraph(value)
         graph.add_subgraph(sim_loop)
 
         # build node connections in reverse order

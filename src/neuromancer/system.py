@@ -131,7 +131,12 @@ class System(nn.Module):
         self.output_keys = set().union(*[c.output_keys for c in nodes])
         self.system_graph = self.graph()
 
-    def graph(self):
+    def graph(self, **kwargs):
+        if 'outputLines' in kwargs.keys():
+            outputLines = kwargs['outputLines']
+        else:
+            outputLines = True
+            
         self._check_unique_names()
         graph = pydot.Dot("problem", graph_type="digraph", splines="spline", rankdir="LR")
         graph.add_node(pydot.Node("in", label="dataset", color='skyblue',
@@ -209,16 +214,22 @@ class System(nn.Module):
         # build connections to the output of the system in a reversed order
         previous_output_keys = []
         for node in self.nodes[::-1]:
-            for key in (set(node.output_keys) - set(previous_output_keys)):
-                graph.add_edge(pydot.Edge(node.name, 'out', label=key))
+            # Connect all outputs
+            if outputLines:
+                for key in (set(node.output_keys) - set(previous_output_keys)):
+                    graph.add_edge(pydot.Edge(node.name, 'out', label=key))
+            # Connect only outputs that are part of the init set
+            else:
+                for key in set(init_keys) & (set(node.output_keys - set(previous_output_keys))):
+                    graph.add_edge(pydot.Edge(node.name, 'out', label=key))
             previous_output_keys += node.output_keys
 
         self.input_keys = list(set(init_keys))
         self.output_keys = list(set(output_keys))
         return graph
 
-    def show(self, figname=None):
-        graph = self.graph()
+    def show(self, figname=None, **kwargs):
+        graph = self.graph(**kwargs)
         if figname is not None:
             plot_func = {'svg': graph.write_svg,
                          'png': graph.write_png,

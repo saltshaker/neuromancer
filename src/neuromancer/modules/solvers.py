@@ -125,6 +125,133 @@ class GradientProjection(Solver):
                 output_data[out_key] = x
         return output_data
 
+class GradientProjSystemDyn(Solver):
+    '''
+    Implementation of projected gradient method for gradient-based corrections of constraints violations
+    while maintaining dynamic relationship between signals
+
+    Abstract steps of the gradient projection method:
+        1, calculate system states based on input variables (eval_system_states method)
+        2, compute aggregated constraints violation penalties (con_viol_energy method)
+        3, compute gradient of the constraints violations w.r.t. variables in input_keys (forward method)
+        4, update the variable values with the negative gradient scaled by step_size (forward method)
+        5, recalculate system states based on the updated variable values (forward method)
+
+    See GradientProjection class for general references for the method
+    '''
+    def __init__(self, system, constraints, input_keys, output_keys=[], system_keys=[], ic_keys=[],
+                 decay=0.1, num_steps=1, step_size=0.01, energy_update=True, name=None):
+        '''
+        :param system: (neuromancer.System) system relationships to maintain wrapped in a neuromancer system object
+        :param constraints: list of objects which implement the Loss interface (e.g. Objective, Loss, or Constraint)
+        :param input_keys: (List of str) List of input variable names
+        :param output_keys: (List of str) List of output variable names, will default to match input_keys if not provided
+        :param system_keys: (List of str) List of system state variable names, will be appended to output_keys
+        :param ic_keys: (List of str) List of system input variables that have initial conditions
+        :param decay: (float) decay factor of the step_size
+        :param num_steps: (int) number of iteration steps for the projected gradient method
+        :param step_size: (float) scaling factor for gradient update
+        :param energy_update: (bool) flag to update energy
+        :param name: (str) name used for visualization purposes
+        '''
+        super().__init__(constraints=constraints,
+                         input_keys=input_keys, output_keys=output_keys,
+                         name=name)
+        self.system = system
+        self.num_steps = num_steps
+        self.step_size = step_size
+        self.input_keys = input_keys
+        self.system_keys = system_keys
+        self.decay = decay
+        self.energy_update = energy_update
+        self.ic_keys = ic_keys
+
+        self.output_keys += system_keys
+
+    def _constraints_check(self):
+        '''
+        Ensures constraints provided are >= or <=
+
+        :return:
+        '''
+        for con in self.constraints:
+            assert str(con.comparator) in ['lt', 'gt'], \
+                f'constraint {con} must be inequality (lt or gt), but it is {str(con.comparator)}'
+
+    def eval_system_states(self, input_dict):
+        '''
+        Calculates the system states
+        :param input_dict: (dict: {str: Tensor})
+        :return data: (dict: {str: Tensor})
+        '''
+        data = input_dict.copy()
+        # Set up initial conditions
+        for key in self.ic_keys:
+            data[key] = data[key][:,0:1,:].detach()
+        # Remove previously calculated output data
+        for key in self.system_keys:
+            if not(key in self.ic_keys):
+                data.pop(key).detach()
+        data = self.system(data)
+        return data
+            
+    def con_viol_energy(self, input_dict):
+        '''
+        Calculate the constraints violation potential energy over batches
+        :param input_dict: (dict: {str: Tensor})
+        :return energy, data: (Tensor), (dict: {str: Tensor})
+        '''
+        data = self.eval_system_states(input_dict)
+        C_violations = []
+        for con in self.constraints:
+            output = con(data)
+            cviolation = output[con.output_keys[2]]
+            C_violations.append(cviolation)
+        C_violations = torch.cat(C_violations, dim=-1)
+        energy = torch.mean(torch.abs(C_violations), dim=1)
+        return energy, data
+
+    def forward(self, data):
+        '''
+        forward pass of the projected gradient solver
+        :param data: (dict: {str: Tensor})
+        :return: (dict: {str: Tensor})
+        '''
+        # init output
+        output_data = data.copy()
+        if self.energy_update:
+            data = output_data
+        # init decay rate
+        d = 1
+        # projected gradient
+        for k in range(self.num_steps):
+            # update energy
+            energy, data = self.con_viol_energy(data)
+            # Restablishes common pointer between output_data and data. This is kind of clumsy
+            if self.energy_update:
+                output_data = data
+            
+            for in_key, out_key in zip(self.input_keys, self.output_keys):
+                # get grad
+                x = data[in_key]
+                step = gradient(energy, x)
+                
+                assert step.shape == x.shape, \
+                    f'Dimensions of gradient step {step.shape} should be equal to dimensions' \
+                    f'{x.shape} of a single variable {in_key}'
+                # update
+                x = x - d * self.step_size*step
+                d = d - self.decay * d
+                output_data.pop(out_key).detach()
+                output_data[out_key] = x
+
+            for key in self.system_keys:
+                # Updated system states
+                states = self.eval_system_states(output_data)
+                output_data.pop(key).detach()
+                output_data[key] = states[key]
+                
+        return output_data
 
 class IterativeSolver(nn.Module):
     """

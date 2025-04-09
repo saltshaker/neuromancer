@@ -118,7 +118,7 @@ class System(nn.Module):
     """
     Simple implementation for arbitrary cyclic computation
     """
-    def __init__(self, nodes, name=None, nstep_key='X', init_func=None, nsteps=None):
+    def __init__(self, nodes, name=None, nstep_key='X', init_func=None, nsteps=None, drop_init_cond=False):
         """
 
         :param nodes: (list of Node objects)
@@ -126,10 +126,12 @@ class System(nn.Module):
         :param nstep_key: (str) Key is used to infer number of rollout steps from input_data
         :param init_func: (callable(input_dict) -> input_dict) This function is used to set initial conditions of the system
         :param nsteps: (int) prediction horizon (rollout steps) length
+        :param drop_init_cond: (bool) any signals with initial conditions will not append them to the rest of the data, defaults to False
         """
         super().__init__()
         self.nstep_key = nstep_key
         self.nsteps = nsteps
+        self.drop_init_cond = drop_init_cond
         self.nodes, self.name = nn.ModuleList(nodes), name
         if init_func is not None:
             self.init = init_func
@@ -302,6 +304,18 @@ class System(nn.Module):
                 indata = {k: data[k][:, i] for k in node.input_keys}  # collect what the compute node needs from data nodes
                 outdata = node(indata)  # compute
                 data = self.cat(data, outdata)  # feed the data nodes
+
+        # Drop initial condtions from data
+        if self.drop_init_cond:
+            for key, value in data.items():
+                try:
+                    if value.shape[1] > nsteps:
+                        data[key] = data[key][:,:nsteps,:]
+                except (AttributeError, IndexError):
+                    # Catches instances of value not being a tensor ('name': 'somestr') or empty tensors ('134123412': tensor.Size([]))
+                    # Not super clean, but functional. Probably should be reworked into specific tests
+                    continue
+
         return data  # return recorded system measurements
 
     def freeze(self):

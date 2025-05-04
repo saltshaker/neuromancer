@@ -228,7 +228,7 @@ class System(nn.Module):
                     graph.add_edge(pydot.Edge(node.name, 'out', label=key))
             # Connect only outputs that are part of the init set
             else:
-                for key in set(init_keys) & (set(node.output_keys - set(previous_output_keys))):
+                for key in set(init_keys) & (set(node.output_keys) - set(previous_output_keys)):
                     graph.add_edge(pydot.Edge(node.name, 'out', label=key))
             previous_output_keys += node.output_keys
 

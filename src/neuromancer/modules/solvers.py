@@ -139,10 +139,10 @@ class GradientProjSystemDyn(Solver):
 
     See GradientProjection class for general references for the method
     '''
-    def __init__(self, system, constraints, input_keys, output_keys=[], system_keys=[], ic_keys=[],
+    def __init__(self, nodes, constraints, input_keys, output_keys=[], system_keys=[], ic_keys=[],
                  decay=0.1, num_steps=1, step_size=0.01, energy_update=True, name=None):
         '''
-        :param system: (neuromancer.System) system relationships to maintain wrapped in a neuromancer system object
+        :param nodes: (list[Node]) list of objects that implement the Node interface
         :param constraints: list of objects which implement the Loss interface (e.g. Objective, Loss, or Constraint)
         :param input_keys: (List of str) List of input variable names
         :param output_keys: (List of str) List of output variable names, will default to match input_keys if not provided
@@ -157,7 +157,7 @@ class GradientProjSystemDyn(Solver):
         super().__init__(constraints=constraints,
                          input_keys=input_keys, output_keys=output_keys,
                          name=name)
-        self.system = system
+        self.nodes = nn.ModuleList(nodes)
         self.num_steps = num_steps
         self.step_size = step_size
         self.input_keys = input_keys
@@ -186,13 +186,17 @@ class GradientProjSystemDyn(Solver):
         '''
         data = input_dict.copy()
         # Set up initial conditions
-        for key in self.ic_keys:
-            data[key] = data[key][:,0:1,:].detach()
+        # for key in self.ic_keys:
+        #     data[key] = data[key][:,0:1,:].detach()
         # Remove previously calculated output data
         for key in self.system_keys:
             if not(key in self.ic_keys):
                 data.pop(key).detach()
-        data = self.system(data)
+        for node in self.nodes:
+            output_dict = node(data)
+            if isinstance(output_dict, torch.Tensor):
+                output_dict = {node.name: output_dict}
+            data = {**data, **output_dict}
         return data
             
     def con_viol_energy(self, input_dict):

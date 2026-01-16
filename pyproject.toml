@@ -3,7 +3,7 @@ requires = ["setuptools", "setuptools-scm"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "neuromancer-psFork"
+name = "neuromancer"
 authors = [
     { name = "Aaron Tuor", email = "aaron.tuor@pnnl.gov" },
     { name = "Jan Drgona", email = "jan.drgona@pnnl.gov" },

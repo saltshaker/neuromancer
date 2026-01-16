@@ -205,7 +205,8 @@ class GradientProjSystemDyn(Solver):
         :param input_dict: (dict: {str: Tensor})
         :return energy, data: (Tensor), (dict: {str: Tensor})
         '''
-        data = self.eval_system_states(input_dict)
+        # data = self.eval_system_states(input_dict)
+        data = input_dict
         C_violations = []
         for con in self.constraints:
             output = con(data)
@@ -252,7 +253,7 @@ class GradientProjSystemDyn(Solver):
             for key in self.system_keys:
                 # Updated system states
                 states = self.eval_system_states(output_data)
-                output_data.pop(key).detach()
+                # output_data.pop(key).detach()
                 output_data[key] = states[key]
                 
         return output_data

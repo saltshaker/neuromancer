@@ -175,10 +175,146 @@ class MLP(Block):
         for lin, nlin in zip(self.linear, self.nonlin):
             x = nlin(lin(x))
         return x
+    
+class MLP_LoRA(MLP):
+    '''
+    '''
+    def __init__(
+            self,
+            insize,
+            outsize,
+            rank,
+            alpha,
+            enabled,
+            layers_app,
+            lora_module=slim.LinearLoRA,
+            bias=True,
+            linear_map=slim.Linear,
+            nonlin=SoftExponential,
+            hsizes=[64],
+            linargs=dict(),
+        ):
+        '''
+        '''
+        super().__init__(insize, outsize, bias, linear_map, nonlin, hsizes, linargs)
 
+        self.enabled = enabled
 
+        sizes = [insize] + hsizes + [outsize]
 
-            
+        tempList = []
+        for k in range(self.nhidden+1):
+            if k in layers_app:
+                tempList.append(lora_module(sizes[k], sizes[k+1], rank=rank, alpha=alpha))
+            else:
+                tempList.append(None)
+
+        self.linear_lora = nn.ModuleList(tempList)
+
+    def block_eval(self, x):
+        """
+
+        :param x: (torch.Tensor, shape=[batchsize, insize])
+        :return: (torch.Tensor, shape=[batchsize, outsize])
+        """
+        for lora, lin, nlin in zip(self.linear_lora, self.linear, self.nonlin):
+            if self.enabled and not(lora is None):
+                x = lin(x) + lora(x)
+                x = nlin(x)
+            else:
+                x = nlin(lin(x))
+        return x
+    
+    def freeze(self):
+        '''
+        Freezes only the base parameters, not the lora parameters
+        '''
+        for lin, nlin in zip(self.linear, self.nonlin):
+            for param in lin.parameters():
+                param.requires_grad = False
+            for param in nlin.parameters():
+                param.requires_grad = False
+
+    def enable_lora(self):
+        self.enabled = True
+
+    def disable_lora(self):
+        self.enabled = False
+
+    def remove_lora(self):
+        cleanModule = MLP(self.in_features, self.out_features)
+        cleanModule.nhidden = self.nhidden
+        cleanModule.nonlin = self.nonlin
+        cleanModule.linear = self.linear
+
+    def merge_lora(self):
+        mergeModule = MLP(self.in_features, self.out_features)
+        mergeModule.nhidden = self.nhidden
+        mergeModule.nonlin = self.nonlin
+        mergeModule.linear = self.linear
+        for lora, lin in zip(self.linear_lora, mergeModule.linear):
+            if lora is None:
+                continue
+            lin.weight.data = lin.weight.data + lora.weight()
+
+class LoRA(Block):
+    def __init__(self, insize, outsize, rank, enabled, *args, **kwargs):
+        super().__init__()
+        self.lora_module = slim.LinearLoRA(insize, outsize, rank, *args, **kwargs)
+        self.enabled = enabled
+        self.in_features, self.out_features = insize, outsize
+
+        if enabled:
+            self.enable_lora()
+        else:
+            self.disable_lora()
+
+    def block_eval(self, x):
+        y = self.lora_module(x)
+        if not(self.enabled):
+            y = torch.zeros_like(y)
+        return y
+    
+    def enable_lora(self):
+        self.enabled = True
+
+    def disable_lora(self):
+        self.enabled = False
+
+class LoRA_Wrapper(Block):
+    def __init__(self, module, lora_module, enabled):
+        super().__init__()
+        self.module = module.eval()
+        self.lora_module = lora_module
+        self.enabled = enabled and lora_module is not None
+        self.in_features, self.out_features = self.module.in_features, self.module.out_features
+
+        if enabled:
+            self.enable_lora()
+        else:
+            self.disable_lora()
+
+    def block_eval(self, x):
+        enable_grad = (self.lora_module is None) and torch.is_grad_enabled()
+        with torch.set_grad_enabled(enable_grad):
+            y = self.module(x)
+        if self.enabled and self.lora_module is not None:
+            y = y + self.lora_module(x)
+
+        return y
+    
+    def enable_lora(self):
+        self.enabled = True
+
+    def disable_lora(self):
+        self.enabled = False
+    
+    def remove_lora(self, inplace=False):
+        return self.module
+
+    def merge_lora(self, inplace=False):
+        return self.lora_module.merge(self.module, inplace=inplace)
+
 
 class KANLinear(torch.nn.Module):
     """

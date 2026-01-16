@@ -119,6 +119,42 @@ class Linear(LinearBase):
         return self.linear(x)
 
 
+class LinearLoRA(LinearBase):
+    """
+    Wrapper for torch.nn.Linear with additional slim methods returning matrix,
+    eigenvectors, eigenvalues and regularization error.
+    """
+    def __init__(self, insize, outsize, rank, alpha=1.0, **kwargs):
+        super().__init__(insize, outsize, bias=False, provide_weights=False)
+        # self.linear = [nn.Linear(insize, rank, bias=bias), nn.Linear(rank, outsize, bias=bias)]
+
+        self.alpha = alpha
+        self.rank = rank
+        
+        self.in_proj = nn.Parameter(
+            torch.empty((insize, rank), dtype=torch.float32),
+            requires_grad=True
+        )
+        self.out_proj = nn.Parameter(
+            torch.empty((rank, outsize), dtype=torch.float32),
+            requires_grad=True
+        )
+
+        nn.init.kaiming_uniform_(self.in_proj, alpha/rank)
+        nn.init.zeros_(self.out_proj)
+
+    def effective_W(self):
+        return self.weight()
+
+    def forward(self, x):
+        x = x @ self.in_proj
+        x = x @ self.out_proj
+        return x
+    
+    def weight(self):
+        return torch.einsum('i r, r o -> o i', self.in_proj, self.out_proj)
+
+
 class L0Linear(LinearBase):
     """
     Implementation of L0 regularization for the input units of a fully connected layer
